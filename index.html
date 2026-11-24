@@ -43,11 +43,22 @@
   * { box-sizing: border-box; }
   html { color-scheme: light; } :root[data-theme="dark"] { color-scheme: dark; }
   body {
-    margin: 0; background: var(--bg); color: var(--ink);
+    margin: 0; position: relative; background: var(--bg); color: var(--ink);
     font: 16px/1.5 "Figtree", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     transition: background-color .2s, color .2s;
   }
-  main { max-width: 1040px; margin: 0 auto; padding: 40px 16px 56px; }
+  main { max-width: 1040px; margin: 0 auto; padding: 72px 16px 56px; }
+
+  /* Guirnalda de luces */
+  .luces { position: absolute; top: 0; left: 0; right: 0; height: 56px; pointer-events: none; overflow: hidden; }
+  .luces svg { display: block; width: 100%; height: 100%; }
+  .luces .cable { fill: none; stroke: var(--muted); stroke-opacity: .45; stroke-width: 1.2; }
+  .luces .casquillo { fill: var(--muted); opacity: .6; }
+  .luces .bombilla { animation: brillo 3.2s ease-in-out infinite; }
+  .luces .r { fill: #d9443a; } .luces .v { fill: #2f8a5f; } .luces .o { fill: #e8b53f; } .luces .b { fill: #9fc6e8; }
+  :root[data-theme="dark"] .luces .bombilla { filter: drop-shadow(0 0 4px currentColor) drop-shadow(0 0 10px currentColor); }
+  .luces .r { color: #ff6a5c; } .luces .v { color: #54c98c; } .luces .o { color: #ffcf5c; } .luces .b { color: #b8dcff; }
+  @keyframes brillo { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
 
   header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 40px; }
   .titulo { display: flex; align-items: center; gap: 14px; }
@@ -100,16 +111,17 @@
 
   .preview { display: grid; justify-items: center; align-items: start; background: var(--desk); border-radius: 16px;
     padding: clamp(20px, 4vw, 44px); min-height: 480px; position: sticky; top: 24px; }
-  .preview canvas { display: none; width: auto; max-width: 100%; max-height: calc(100vh - 270px); height: auto; background: #fff;
+  .preview canvas { display: none; width: auto; max-width: 100%; max-height: calc(100vh - 300px); height: auto; background: #fff;
     padding: 10px; border-radius: 2px; box-shadow: var(--sheet-shadow); }
-  .preview .empty { width: 100%; max-width: min(520px, calc((100vh - 270px) * 210 / 297)); aspect-ratio: 210 / 297; border: 1px dashed var(--muted); border-radius: 2px; opacity: .7;
+  .preview .empty { width: 100%; max-width: min(520px, calc((100vh - 300px) * 210 / 297)); aspect-ratio: 210 / 297; border: 1px dashed var(--muted); border-radius: 2px; opacity: .7;
     display: grid; place-items: center; color: var(--muted); font-size: 14px; text-align: center; padding: 24px; }
   .preview.has canvas { display: block; } .preview.has .empty { display: none; }
   @media (max-width: 800px) { .preview { min-height: 0; position: static; } .preview canvas { max-height: none; width: 100%; padding: 6px; } .preview { padding: 20px 16px; } .preview:not(.has) { display: none; } }
-  @media (prefers-reduced-motion: reduce) { body { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { body { transition: none; } .luces .bombilla { animation: none; } }
 </style>
 </head>
 <body>
+<div class="luces" aria-hidden="true"><svg id="luces"></svg></div>
 <main>
   <header>
     <div>
@@ -381,6 +393,32 @@
     pintarTema();
   });
   pintarTema();
+
+  // Guirnalda: un cable con curvas entre ganchos y bombillas colgando
+  function pintarLuces() {
+    const svg = $("luces"), w = Math.max(320, document.documentElement.clientWidth);
+    const tramo = w < 600 ? 90 : 120, y0 = 4, caida = 18, colores = ["r", "v", "o", "b"];
+    const n = Math.ceil(w / tramo) + 1;
+    let d = `M0 ${y0}`, bombillas = "", k = 0;
+    for (let i = 0; i < n; i++) {
+      const x = i * tramo;
+      d += ` Q${x + tramo / 2} ${y0 + 2 * caida} ${x + tramo} ${y0}`;
+      for (const t of [0.22, 0.5, 0.78]) {
+        const bx = (1 - t) * (1 - t) * x + 2 * (1 - t) * t * (x + tramo / 2) + t * t * (x + tramo);
+        const by = (1 - t) * (1 - t) * y0 + 2 * (1 - t) * t * (y0 + 2 * caida) + t * t * y0;
+        const c = colores[k % colores.length], delay = ((k * 0.73) % 3.2).toFixed(2);
+        bombillas += `<g transform="translate(${bx.toFixed(1)} ${by.toFixed(1)})">` +
+          `<rect class="casquillo" x="-2.2" y="-1" width="4.4" height="4" rx="1"/>` +
+          `<ellipse class="bombilla ${c}" cx="0" cy="8" rx="3.6" ry="5.4" style="animation-delay:-${delay}s"/></g>`;
+        k++;
+      }
+    }
+    svg.setAttribute("viewBox", `0 0 ${w} 56`);
+    svg.innerHTML = `<path class="cable" d="${d}"/>${bombillas}`;
+  }
+  pintarLuces();
+  let lucesTimer;
+  window.addEventListener("resize", () => { clearTimeout(lucesTimer); lucesTimer = setTimeout(pintarLuces, 150); });
 
   // Enlaces directos desde la hoja de cálculo: ?desde=101&hasta=200
   const q = new URLSearchParams(location.search);
