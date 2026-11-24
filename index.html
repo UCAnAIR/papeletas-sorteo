@@ -316,7 +316,7 @@
         const best = [...votes.entries()].sort((a, b) => b[1] - a[1])[0];
         m.bg = best ? best[0].split(",").map((v) => Math.min(255, +v) / 255) : [1, 1, 1];
       }
-      pages.push({ marks, width: vx2 - vx, height: pageH });
+      pages.push({ marks, width: vx2 - vx, height: pageH, ox: vx, oy: vy });
     }
     const total = pages.reduce((s, p) => s + p.marks.length, 0);
     if (!total) throw new Error(`La plantilla no tiene ningún «${C.marcador}» donde poner el número.`);
@@ -350,7 +350,8 @@
           ops.push(clip(), endPath());
           page.pushOperators(...ops);
         }
-        page.drawPage(embedded[p], { x: 0, y: 0 });
+        // Algunos PDF de Canva no empiezan en (0,0): se compensa para que todo cuadre
+        page.drawPage(embedded[p], { x: -info.ox, y: -info.oy });
         if (recortar) page.pushOperators(popGraphicsState());
         hojas++;
         for (const m of usadas) {
