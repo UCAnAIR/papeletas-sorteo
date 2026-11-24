@@ -27,7 +27,7 @@ window.CONFIG = {
   orden: "filas",
 
   // Máximo de papeletas por PDF (para no colgar el navegador)
-  maximo: 5000,
+  maximo: 10000,
 
   // Ajuste fino del recuadro que tapa el marcador, en proporción
   // al tamaño de letra. Solo tocar si se ve un resto del «0000»
