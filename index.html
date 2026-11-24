@@ -98,6 +98,11 @@
   input::placeholder { color: var(--muted); opacity: .45; }
   :focus-visible { outline: 2px solid var(--pine); outline-offset: 2px; }
   input:focus-visible { border-color: transparent; }
+  input[aria-invalid="true"] { border-color: var(--err); }
+  input[aria-invalid="true"]:focus-visible { outline-color: var(--err); }
+  .aviso { color: var(--err); font-size: 13px; line-height: 1.35; min-height: 0; }
+  .aviso:empty { display: none; }
+  #status.nota { color: var(--muted); }
 
   .btn {
     font: inherit; font-weight: 600; font-size: 15px; border-radius: 8px; padding: 12px 16px;
@@ -165,10 +170,12 @@
       <form id="form" novalidate>
         <div class="row">
           <label>Desde
-            <input id="desde" type="number" inputmode="numeric" min="0" step="1" required placeholder="101">
+            <input id="desde" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="101" aria-describedby="aviso-desde">
+            <small class="aviso" id="aviso-desde"></small>
           </label>
           <label>Hasta
-            <input id="hasta" type="number" inputmode="numeric" min="0" step="1" required placeholder="200">
+            <input id="hasta" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="200" aria-describedby="aviso-hasta">
+            <small class="aviso" id="aviso-hasta"></small>
           </label>
         </div>
         <button class="btn primary" id="generar" type="submit">Generar papeletas</button>
@@ -367,19 +374,107 @@
     }
   });
 
+  // ── Lectura de números a prueba de despistes ──────────────────
+  // Acepta espacios, «Nº 101», «#101», «0101», «1.000», números copiados de una hoja
+  // con caracteres invisibles e incluso «101-200» escrito en una sola casilla.
+  const MAXIMO_NUM = 10 ** C.cifras - 1;
+  function limpiar(v) {
+    return String(v ?? "")
+      .normalize("NFKC")                               // dígitos de ancho completo, espacios raros…
+      .replace(/[​-‍⁠﻿­]/g, "") // caracteres invisibles
+      .replace(/\s+/g, " ").trim()
+      .replace(/^(?:n\.?\s*[º°o]\.?|n[uú]m(?:ero)?\.?|#)\s*/i, "");
+  }
+  function leerRango(v) {
+    const m = limpiar(v).match(/^(\d[\d.,\s]*?)\s*(?:-|–|—|\/|\ba\b|\bal\b|\bhasta\b)\s*(\d[\d.,\s]*)$/i);
+    if (m) return [m[1], m[2]];
+    // «101 200»: dos números separados por un espacio (salvo «1 000», que es mil)
+    const e = limpiar(v).match(/^(\d+)\s+(\d+)$/);
+    if (e && !(e[1].length === 1 && e[2].length === 3)) return [e[1], e[2]];
+    return null;
+  }
+  function leerNumero(v) {
+    const t = limpiar(v);
+    if (t === "") return { vacio: true };
+    let n = t.replace(/\s+/g, "");
+    if (/^\d{1,3}([.,]\d{3})+$/.test(n)) n = n.replace(/[.,]/g, "");   // 1.000 o 1,000
+    if (/^\d+$/.test(n)) {
+      const num = parseInt(n, 10);
+      if (num > MAXIMO_NUM) return { error: `El número más alto posible es ${MAXIMO_NUM}.` };
+      return { n: num };
+    }
+    if (/^-\s*\d/.test(n)) return { error: "No puede ser negativo." };
+    if (/^\d+[.,]\d+$/.test(n)) return { error: "Escribe un número entero, sin decimales." };
+    const sobra = [...new Set(n.replace(/[\d]/g, ""))].map((c) => `«${c}»`).join(" ");
+    return { error: `Escribe solo cifras. Sobra ${sobra}.` };
+  }
+  function marcar(el, msg) {
+    const aviso = $("aviso-" + el.id);
+    aviso.textContent = msg || "";
+    el.setAttribute("aria-invalid", msg ? "true" : "false");
+  }
+  function hojasPara(cantidad) {
+    const porHoja = plantilla ? plantilla.porCiclo / plantilla.pages.length : 10;
+    return Math.ceil(cantidad / porHoja);
+  }
+  // Si alguien escribe «101-200» en una casilla, lo repartimos en las dos
+  function repartirRango(el) {
+    const r = leerRango(el.value);
+    if (!r) return false;
+    desdeEl.value = r[0].trim(); hastaEl.value = r[1].trim();
+    return true;
+  }
+  // Comprueba las dos casillas y devuelve el intervalo, o null si hay algo que corregir
+  function validar({ final = false } = {}) {
+    const a = leerNumero(desdeEl.value), b = leerNumero(hastaEl.value);
+    marcar(desdeEl, a.error); marcar(hastaEl, b.error);
+    if (a.error || b.error) return null;
+    if (a.vacio && b.vacio) { if (final) { marcar(desdeEl, "Escribe el primer número."); desdeEl.focus(); } return null; }
+    let desde = a.vacio ? b.n : a.n, hasta = b.vacio ? a.n : b.n, notas = [];
+    if (final && (a.vacio || b.vacio)) notas.push("Solo había un número, así que se genera una papeleta.");
+    if (hasta < desde) {
+      [desde, hasta] = [hasta, desde];
+      if (final) notas.push("Los números estaban al revés y se han ordenado.");
+    }
+    const cantidad = hasta - desde + 1;
+    if (cantidad > C.maximo) {
+      marcar(hastaEl, `Son ${cantidad} papeletas y el máximo es ${C.maximo}. Divídelo en varios bloques.`);
+      return null;
+    }
+    return { desde, hasta, cantidad, notas };
+  }
+  // Mientras se escribe: avisos al momento y resumen de lo que se va a generar
+  for (const el of [desdeEl, hastaEl]) {
+    el.addEventListener("input", () => {
+      if (actions.classList.contains("show")) {           // el PDF anterior ya no corresponde
+        actions.classList.remove("show"); preview.classList.remove("has");
+      }
+      if (leerRango(el.value)) { setStatus("Se repartirá en Desde y Hasta al salir de la casilla.", "nota"); marcar(el, ""); return; }
+      const v = validar();
+      if (v) setStatus(`${v.cantidad} papeleta${v.cantidad === 1 ? "" : "s"} en ${hojasPara(v.cantidad)} hoja${hojasPara(v.cantidad) === 1 ? "" : "s"}.`, "nota");
+      else setStatus("");
+    });
+    el.addEventListener("blur", () => {
+      repartirRango(el);
+      // Deja el número limpio a la vista (sin espacios ni «Nº»)
+      for (const e of [desdeEl, hastaEl]) { const r = leerNumero(e.value); if (r.n !== undefined) e.value = String(r.n); }
+      validar();
+    });
+  }
+
+  let generando = false;
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
-    const desde = Number(desdeEl.value), hasta = Number(hastaEl.value);
-    if (desdeEl.value === "" || hastaEl.value === "") return setStatus("Escribe los dos números.", "err");
-    if (!Number.isInteger(desde) || !Number.isInteger(hasta) || desde < 0 || hasta < 0)
-      return setStatus("Usa números enteros, sin decimales ni negativos.", "err");
-    if (hasta < desde) return setStatus("«Hasta» tiene que ser mayor o igual que «Desde».", "err");
-    const cantidad = hasta - desde + 1;
-    if (cantidad > C.maximo) return setStatus(`Son ${cantidad} papeletas; el máximo por PDF es ${C.maximo}. Divídelo en varios bloques.`, "err");
-    if (String(hasta).length > C.cifras) return setStatus(`El número máximo es ${"9".repeat(C.cifras)}.`, "err");
+    if (generando) return;
+    repartirRango(desdeEl) || repartirRango(hastaEl);
+    const v = validar({ final: true });
+    if (!v) { setStatus("Revisa los números marcados en rojo.", "err"); return; }
+    const { desde, hasta, cantidad, notas } = v;
+    desdeEl.value = String(desde); hastaEl.value = String(hasta);
+    marcar(desdeEl, ""); marcar(hastaEl, "");
 
-    btn.disabled = true; actions.classList.remove("show");
-    setStatus("Generando…");
+    generando = true; btn.disabled = true; actions.classList.remove("show");
+    setStatus("Generando…", "nota");
     try {
       const { bytes, hojas } = await generar(desde, hasta);
       if (lastUrl) URL.revokeObjectURL(lastUrl);
@@ -388,13 +483,14 @@
       abrir.href = lastUrl;
       await pintarVista(bytes);
       actions.classList.add("show");
-      setStatus(`${cantidad} papeleta${cantidad === 1 ? "" : "s"}, del ${fmt(desde)} al ${fmt(hasta)}, en ${hojas} hoja${hojas === 1 ? "" : "s"}.`, "ok");
+      const resumen = `${cantidad} papeleta${cantidad === 1 ? "" : "s"}, del ${fmt(desde)} al ${fmt(hasta)}, en ${hojas} hoja${hojas === 1 ? "" : "s"}.`;
+      setStatus([resumen, ...notas].join(" "), "ok");
       try { history.replaceState(null, "", `?desde=${desde}&hasta=${hasta}`); } catch (_) {}
     } catch (e) {
       console.error(e);
-      setStatus(e.message || "No se pudo generar el PDF.", "err");
+      setStatus(e.message || "No se pudo generar el PDF. Recarga la página y vuelve a intentarlo.", "err");
     } finally {
-      btn.disabled = false;
+      generando = false; btn.disabled = false;
     }
   });
 
@@ -482,7 +578,7 @@
   const q = new URLSearchParams(location.search);
   if (q.get("desde")) desdeEl.value = q.get("desde");
   if (q.get("hasta")) hastaEl.value = q.get("hasta");
-  if (q.get("desde") && q.get("hasta")) form.requestSubmit();
+  if (q.get("desde") || q.get("hasta")) form.requestSubmit();
 })();
 </script>
 </body>

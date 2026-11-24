@@ -7,6 +7,10 @@ No necesita servidor ni base de datos: basta con alojar esta carpeta tal cual (p
 
 - Abre la página, escribe «Desde» y «Hasta» y pulsa **Generar PDF**.
 - Enlace directo con el intervalo ya puesto (genera el PDF al abrirlo): `https://ucanair.github.io/papeletas-sorteo/?desde=101&hasta=200`.
+- Las casillas aceptan espacios, «Nº 101», «#101», «0101», «1.000», números pegados desde una hoja e
+  incluso «101-200» o «101 a 200» en una sola casilla. Si hay letras, decimales, negativos o un número
+  demasiado alto, la casilla se marca en rojo con el motivo. Si los números están al revés se ordenan, y si
+  solo hay uno se genera una papeleta.
 - Desde Google Sheets, en una columna de la hoja de registro (B = desde, C = hasta):
   `=HIPERVINCULO("https://ucanair.github.io/papeletas-sorteo/?desde="&B2&"&hasta="&C2; "Imprimir")`
 
