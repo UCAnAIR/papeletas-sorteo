@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+  // Si la página se abre como «/papeletas» (sin barra final), los archivos
+  // se buscan igualmente dentro de la carpeta «/papeletas/».
+  (function () {
+    var p = location.pathname;
+    if (!p.endsWith("/") && !/\.[a-z0-9]+$/i.test(p)) {
+      var b = document.createElement("base"); b.href = p + "/"; document.head.appendChild(b);
+    }
+  })();
+</script>
+<title>Papeletas del sorteo · UCA&amp;Air</title>
+<meta name="description" content="Genera el PDF con las papeletas numeradas del sorteo de UCA&Air.">
+<style>
+  :root {
+    --bg: #f6f4f0; --card: #ffffff; --text: #1d1d1f; --muted: #6b6b70;
+    --line: #e2ded6; --accent: #d9731f; --accent-text: #ffffff; --ok: #2f7d4f; --err: #b3261e;
+    --field: #fbfaf8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17171a; --card: #222226; --text: #f2f2f2; --muted: #a3a3aa;
+      --line: #34343a; --accent: #f08a33; --accent-text: #1a1a1a; --ok: #6cc28e; --err: #ff8a80;
+      --field: #1b1b1e;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17171a; --card: #222226; --text: #f2f2f2; --muted: #a3a3aa;
+    --line: #34343a; --accent: #f08a33; --accent-text: #1a1a1a; --ok: #6cc28e; --err: #ff8a80;
+    --field: #1b1b1e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 980px; margin: 0 auto; padding: 32px 16px 48px; }
+  header { margin-bottom: 20px; }
+  header p.kicker { margin: 0; color: var(--accent); font-weight: 600; letter-spacing: .04em; font-size: 13px; text-transform: uppercase; }
+  h1 { margin: 4px 0 6px; font-size: 28px; line-height: 1.2; }
+  header p.lead { margin: 0; color: var(--muted); max-width: 60ch; }
+  .layout { display: grid; grid-template-columns: 320px 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 760px) { .layout { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+  form { display: grid; gap: 14px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  label { display: grid; gap: 4px; font-size: 14px; font-weight: 600; }
+  input {
+    font: inherit; font-size: 22px; font-variant-numeric: tabular-nums; width: 100%;
+    padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--field); color: var(--text);
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+  button, a.btn {
+    font: inherit; font-weight: 600; border: 0; border-radius: 10px; padding: 12px 16px;
+    cursor: pointer; text-align: center; text-decoration: none; display: block;
+  }
+  button.primary, a.primary { background: var(--accent); color: var(--accent-text); }
+  a.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  button:disabled { opacity: .55; cursor: progress; }
+  #status { min-height: 1.5em; font-size: 14px; color: var(--muted); margin: 0; }
+  #status.ok { color: var(--ok); } #status.err { color: var(--err); }
+  #actions { display: none; gap: 10px; margin-top: 4px; }
+  #actions.show { display: grid; }
+  .hint { font-size: 13px; color: var(--muted); margin: 14px 0 0; }
+  .hint a { color: var(--accent); font-weight: 600; }
+  .preview { padding: 16px; min-height: 420px; display: grid; gap: 8px; align-content: start; }
+  .preview canvas { width: 100%; height: auto; display: none; border: 1px solid var(--line); background: #fff; }
+  .preview .empty { display: grid; place-items: center; min-height: 380px; color: var(--muted); text-align: center; font-size: 14px; }
+  .preview .cap { display: none; margin: 0; font-size: 13px; color: var(--muted); }
+  .preview.has canvas, .preview.has .cap { display: block; } .preview.has .empty { display: none; }
+  @media (max-width: 760px) { .preview { min-height: 0; } .preview .empty { display: none; } .preview:not(.has) { display: none; } }
+  footer { margin-top: 24px; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="kicker">UCA&amp;Air · Sorteo de cesta navideña</p>
+    <h1>Generador de papeletas</h1>
+    <p class="lead">Escribe el primer y el último número de tu bloque y descarga el PDF listo para imprimir.</p>
+  </header>
+
+  <div class="layout">
+    <section class="card">
+      <form id="form" novalidate>
+        <div class="row">
+          <label>Desde
+            <input id="desde" type="number" inputmode="numeric" min="0" step="1" required placeholder="101">
+          </label>
+          <label>Hasta
+            <input id="hasta" type="number" inputmode="numeric" min="0" step="1" required placeholder="200">
+          </label>
+        </div>
+        <button class="primary" id="generar" type="submit">Generar PDF</button>
+        <p id="status" role="status" aria-live="polite"></p>
+        <div id="actions">
+          <a class="btn primary" id="descargar" href="#">Descargar PDF</a>
+          <a class="btn secondary" id="abrir" href="#" target="_blank" rel="noopener">Abrir para imprimir</a>
+        </div>
+      </form>
+      <p class="hint">Al imprimir, elige <strong>A4</strong> y <strong>tamaño real (100 %)</strong>, sin «ajustar a la página», para que las papeletas salgan con su tamaño.</p>
+      <p class="hint"><a id="blanco" href="#">Descargar papeletas en blanco</a>: una hoja con una línea en lugar del número, para imprimir copias, repartirlas y rellenarlas a mano.</p>
+    </section>
+
+    <section class="card preview" id="preview">
+      <div class="empty">Aquí verás la vista previa del PDF.</div>
+      <p class="cap">Vista previa de la primera hoja</p>
+      <canvas id="visor" aria-label="Vista previa de la primera hoja de papeletas"></canvas>
+    </section>
+  </div>
+
+  <footer>El PDF se genera en tu propio navegador: no se envía nada a ningún servidor.</footer>
+</main>
+
+<script src="config.js"></script>
+<script src="lib/pdf-lib.min.js"></script>
+<script src="lib/fontkit.umd.min.js"></script>
+<script src="lib/pdf.min.js"></script>
+<script>
+(() => {
+  const C = window.CONFIG;
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "lib/pdf.worker.min.js";
+
+  const $ = (id) => document.getElementById(id);
+  const form = $("form"), desdeEl = $("desde"), hastaEl = $("hasta"), btn = $("generar");
+  const statusEl = $("status"), actions = $("actions"), dl = $("descargar"), abrir = $("abrir");
+  const preview = $("preview"), visor = $("visor");
+  let plantilla = null;   // se carga una vez
+  let lastUrl = null;
+
+  const fmt = (n) => String(n).padStart(C.cifras, "0");
+  function setStatus(msg, kind = "") { statusEl.textContent = msg; statusEl.className = kind; }
+
+  async function fetchBytes(path) {
+    const r = await fetch(path, { cache: "no-cache" });
+    if (!r.ok) throw new Error(`No se pudo cargar «${path}» (${r.status}).`);
+    return new Uint8Array(await r.arrayBuffer());
+  }
+
+  function hexToRgb(hex) {
+    const h = hex.replace("#", "");
+    const v = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+    return [0, 2, 4].map((i) => parseInt(v.slice(i, i + 2), 16) / 255);
+  }
+
+  function rectFor(m) {
+    const t = C.tapar, s = m.size;
+    return { x: m.x - t.izquierda * s, y: m.y - t.abajo * s,
+             w: m.w + (t.izquierda + t.derecha) * s, h: (t.abajo + t.arriba) * s };
+  }
+
+  // Ordena los huecos en filas (o columnas) aunque no estén perfectamente alineados
+  function ordenar(marks) {
+    const porFilas = C.orden !== "columnas";
+    const main = (m) => (porFilas ? -m.y : m.x);
+    const cross = (m) => (porFilas ? m.x : -m.y);
+    const sorted = [...marks].sort((a, b) => main(a) - main(b));
+    const groups = [];
+    for (const m of sorted) {
+      const g = groups[groups.length - 1];
+      if (g && Math.abs(main(m) - main(g[0])) < m.size * 0.6) g.push(m); else groups.push([m]);
+    }
+    return groups.flatMap((g) => g.sort((a, b) => cross(a) - cross(b)));
+  }
+
+  // Lee la plantilla: localiza cada marcador y el color de fondo que hay detrás
+  async function cargarPlantilla() {
+    if (plantilla) return plantilla;
+    const [pdfBytes, fontBytes] = await Promise.all([fetchBytes(C.plantilla), fetchBytes(C.fuente)]);
+    const doc = await pdfjsLib.getDocument({ data: pdfBytes.slice() }).promise;
+    const pages = [];
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      const [vx, vy, vx2, vy2] = page.view;
+      const tc = await page.getTextContent();
+      let marks = [];
+      for (const it of tc.items) {
+        let idx = it.str.indexOf(C.marcador);
+        while (idx >= 0) {
+          const [, , c, d, e, f] = it.transform;
+          const n = it.str.length, size = Math.hypot(c, d) || it.height;
+          marks.push({ x: e + (it.width * idx) / n - vx, y: f - vy,
+                       w: (it.width * C.marcador.length) / n, size });
+          idx = it.str.indexOf(C.marcador, idx + C.marcador.length);
+        }
+      }
+      marks = ordenar(marks);
+
+      // Muestra el color del borde del recuadro para taparlo con el mismo color
+      const scale = 1.5, vp = page.getViewport({ scale });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.ceil(vp.width); canvas.height = Math.ceil(vp.height);
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      const pageH = vy2 - vy;
+      for (const m of marks) {
+        const r = rectFor(m), votes = new Map();
+        const pts = [];
+        for (let k = 0; k <= 10; k++) {
+          const px = r.x + (r.w * k) / 10, py = r.y + (r.h * k) / 10;
+          pts.push([px, r.y - 1], [px, r.y + r.h + 1], [r.x - 1, py], [r.x + r.w + 1, py]);
+        }
+        for (const [px, py] of pts) {
+          const cx = Math.round(px * scale), cy = Math.round((pageH - py) * scale);
+          if (cx < 0 || cy < 0 || cx >= canvas.width || cy >= canvas.height) continue;
+          const [R, G, B] = ctx.getImageData(cx, cy, 1, 1).data;
+          const key = [R, G, B].map((v) => Math.round(v / 8) * 8).join(",");
+          votes.set(key, (votes.get(key) || 0) + 1);
+        }
+        const best = [...votes.entries()].sort((a, b) => b[1] - a[1])[0];
+        m.bg = best ? best[0].split(",").map((v) => Math.min(255, +v) / 255) : [1, 1, 1];
+      }
+      pages.push({ marks, width: vx2 - vx, height: pageH });
+    }
+    const total = pages.reduce((s, p) => s + p.marks.length, 0);
+    if (!total) throw new Error(`La plantilla no tiene ningún «${C.marcador}» donde poner el número.`);
+    plantilla = { pdfBytes, fontBytes, pages, porCiclo: total };
+    return plantilla;
+  }
+
+  // blanco = true → una hoja con una línea para escribir el número a mano
+  async function generar(desde, hasta, blanco = false) {
+    const P = await cargarPlantilla();
+    const { PDFDocument, rgb } = PDFLib;
+    const out = await PDFDocument.create();
+    out.registerFontkit(fontkit);
+    const font = await out.embedFont(P.fontBytes, { subset: true });
+    const tpl = await PDFDocument.load(P.pdfBytes);
+    const embedded = await out.embedPages(tpl.getPages());
+    const color = rgb(...hexToRgb(C.color));
+
+    let n = desde, hojas = 0;
+    while (blanco ? hojas === 0 : n <= hasta) {
+      for (let p = 0; p < P.pages.length && (blanco || n <= hasta); p++) {
+        const info = P.pages[p];
+        const page = out.addPage([info.width, info.height]);
+        page.drawPage(embedded[p], { x: 0, y: 0 });
+        hojas++;
+        for (const m of info.marks) {
+          const r = rectFor(m);
+          page.drawRectangle({ x: r.x, y: r.y, width: r.w, height: r.h, color: rgb(...m.bg) });
+          if (blanco) {
+            const ancho = m.w + 0.3 * m.size, x = m.x + m.w / 2 - ancho / 2, y = m.y + 0.02 * m.size;
+            page.drawLine({ start: { x, y }, end: { x: x + ancho, y }, thickness: 0.9, color });
+            continue;
+          }
+          if (n > hasta) continue;   // huecos sobrantes de la última hoja quedan en blanco
+          const txt = fmt(n++);
+          const tw = font.widthOfTextAtSize(txt, m.size);
+          page.drawText(txt, { x: m.x + m.w / 2 - tw / 2, y: m.y, size: m.size, font, color });
+        }
+      }
+    }
+    out.setTitle(blanco ? "Papeletas en blanco · Sorteo UCA&Air" : `Papeletas ${fmt(desde)}–${fmt(hasta)} · Sorteo UCA&Air`);
+    out.setCreator("UCA&Air · Generador de papeletas");
+    const bytes = await out.save();
+    return { bytes, hojas, porHoja: P.porCiclo / P.pages.length };
+  }
+
+  async function pintarVista(bytes) {
+    try {
+      const doc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+      const page = await doc.getPage(1);
+      const base = page.getViewport({ scale: 1 });
+      const scale = Math.min(2.5, (visor.parentElement.clientWidth * (window.devicePixelRatio || 1)) / base.width) || 1.5;
+      const vp = page.getViewport({ scale });
+      visor.width = Math.ceil(vp.width); visor.height = Math.ceil(vp.height);
+      await page.render({ canvasContext: visor.getContext("2d"), viewport: vp }).promise;
+      preview.classList.add("has");
+      doc.destroy();
+    } catch (e) { console.warn("Sin vista previa:", e); }
+  }
+
+  $("blanco").addEventListener("click", async (ev) => {
+    ev.preventDefault();
+    setStatus("Generando papeletas en blanco…");
+    try {
+      const { bytes } = await generar(1, 1, true);
+      const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+      const a = document.createElement("a");
+      a.href = url; a.download = "papeletas_en_blanco.pdf";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      setStatus("Papeletas en blanco descargadas.", "ok");
+    } catch (e) {
+      console.error(e);
+      setStatus(e.message || "No se pudo generar el PDF.", "err");
+    }
+  });
+
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const desde = Number(desdeEl.value), hasta = Number(hastaEl.value);
+    if (desdeEl.value === "" || hastaEl.value === "") return setStatus("Escribe los dos números.", "err");
+    if (!Number.isInteger(desde) || !Number.isInteger(hasta) || desde < 0 || hasta < 0)
+      return setStatus("Usa números enteros, sin decimales ni negativos.", "err");
+    if (hasta < desde) return setStatus("«Hasta» tiene que ser mayor o igual que «Desde».", "err");
+    const cantidad = hasta - desde + 1;
+    if (cantidad > C.maximo) return setStatus(`Son ${cantidad} papeletas; el máximo por PDF es ${C.maximo}. Divídelo en varios bloques.`, "err");
+    if (String(hasta).length > C.cifras) return setStatus(`El número máximo es ${"9".repeat(C.cifras)}.`, "err");
+
+    btn.disabled = true; actions.classList.remove("show");
+    setStatus("Generando…");
+    try {
+      const { bytes, hojas } = await generar(desde, hasta);
+      if (lastUrl) URL.revokeObjectURL(lastUrl);
+      lastUrl = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+      dl.href = lastUrl; dl.download = `papeletas_${fmt(desde)}-${fmt(hasta)}.pdf`;
+      abrir.href = lastUrl;
+      await pintarVista(bytes);
+      actions.classList.add("show");
+      setStatus(`${cantidad} papeleta${cantidad === 1 ? "" : "s"} (${fmt(desde)} a ${fmt(hasta)}) en ${hojas} hoja${hojas === 1 ? "" : "s"}.`, "ok");
+      try { history.replaceState(null, "", `?desde=${desde}&hasta=${hasta}`); } catch (_) {}
+    } catch (e) {
+      console.error(e);
+      setStatus(e.message || "No se pudo generar el PDF.", "err");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // Enlaces directos desde la hoja de cálculo: ?desde=101&hasta=200
+  const q = new URLSearchParams(location.search);
+  if (q.get("desde")) desdeEl.value = q.get("desde");
+  if (q.get("hasta")) hastaEl.value = q.get("hasta");
+  if (q.get("desde") && q.get("hasta")) form.requestSubmit();
+})();
+</script>
+</body>
+</html>
