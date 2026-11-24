@@ -249,6 +249,25 @@
     return groups.flatMap((g) => g.sort((a, b) => cross(a) - cross(b)));
   }
 
+  // Cada papeleta ocupa una celda de una cuadrícula regular (filas × columnas) que cubre la hoja.
+  // Se usa para no imprimir las papeletas que sobran en la última hoja.
+  function asignarCeldas(marks, W, H) {
+    const grupos = (vals, tol) => {
+      const g = [];
+      for (const v of [...vals].sort((a, b) => a - b)) if (!g.length || v - g[g.length - 1] > tol) g.push(v);
+      return g.length;
+    };
+    const cx = marks.map((m) => m.x + m.w / 2), cy = marks.map((m) => m.y + m.size * 0.35);
+    const tol = Math.max(...marks.map((m) => m.size), 1) * 0.6;
+    const cols = grupos(cx, tol), filas = grupos(cy, tol);
+    const cw = W / cols, ch = H / filas;
+    marks.forEach((m, i) => {
+      const c = Math.min(cols - 1, Math.max(0, Math.floor(cx[i] / cw)));
+      const f = Math.min(filas - 1, Math.max(0, Math.floor((H - cy[i]) / ch)));
+      m.celda = { x: c * cw, y: H - (f + 1) * ch, w: cw, h: ch };
+    });
+  }
+
   // Lee la plantilla: localiza cada marcador y el color de fondo que hay detrás
   async function cargarPlantilla() {
     if (plantilla) return plantilla;
@@ -271,6 +290,7 @@
         }
       }
       marks = ordenar(marks);
+      asignarCeldas(marks, vx2 - vx, vy2 - vy);
 
       // Muestra el color del borde del recuadro para taparlo con el mismo color
       const scale = 1.5, vp = page.getViewport({ scale });
@@ -307,7 +327,7 @@
   // blanco = true → una hoja con una línea para escribir el número a mano
   async function generar(desde, hasta, blanco = false) {
     const P = await cargarPlantilla();
-    const { PDFDocument, rgb } = PDFLib;
+    const { PDFDocument, rgb, pushGraphicsState, popGraphicsState, rectangle, clip, endPath } = PDFLib;
     const out = await PDFDocument.create();
     out.registerFontkit(fontkit);
     const font = await out.embedFont(P.fontBytes, { subset: true });
@@ -320,9 +340,20 @@
       for (let p = 0; p < P.pages.length && (blanco || n <= hasta); p++) {
         const info = P.pages[p];
         const page = out.addPage([info.width, info.height]);
+        // Si en esta hoja sobran huecos, solo se dibujan las celdas de las papeletas que llevan número
+        const quedan = hasta - n + 1;
+        const usadas = blanco || quedan >= info.marks.length ? info.marks : info.marks.slice(0, Math.max(0, quedan));
+        const recortar = usadas.length < info.marks.length;
+        if (recortar) {
+          const ops = [pushGraphicsState()];
+          for (const m of usadas) ops.push(rectangle(m.celda.x, m.celda.y, m.celda.w, m.celda.h));
+          ops.push(clip(), endPath());
+          page.pushOperators(...ops);
+        }
         page.drawPage(embedded[p], { x: 0, y: 0 });
+        if (recortar) page.pushOperators(popGraphicsState());
         hojas++;
-        for (const m of info.marks) {
+        for (const m of usadas) {
           const r = rectFor(m);
           page.drawRectangle({ x: r.x, y: r.y, width: r.w, height: r.h, color: rgb(...m.bg) });
           if (blanco) {
@@ -330,7 +361,6 @@
             page.drawLine({ start: { x, y }, end: { x: x + ancho, y }, thickness: 0.9, color });
             continue;
           }
-          if (n > hasta) continue;   // huecos sobrantes de la última hoja quedan en blanco
           const txt = fmt(n++);
           const tw = font.widthOfTextAtSize(txt, m.size);
           page.drawText(txt, { x: m.x + m.w / 2 - tw / 2, y: m.y, size: m.size, font, color });
