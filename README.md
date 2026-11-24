@@ -27,6 +27,15 @@ Para probarla en tu ordenador hay que servirla (abrir `index.html` con doble cli
 El resto de opciones (cifras, color, orden de numeración, ajuste del recuadro que tapa el `0000`) están
 explicadas en `config.js`.
 
+**Importante:** el navegador puede guardar `config.js` en caché unos minutos. Cada vez que lo cambies, sube el
+número de `config.js?v=3` en `index.html` (a `?v=4`, `?v=5`…) para que todo el mundo reciba la versión nueva.
+
+## Botones tras generar
+
+- **Descargar PDF** guarda el archivo.
+- **Imprimir** abre directamente el diálogo de impresión del navegador (en móvil se llama **Abrir PDF** y abre
+  el PDF en una pestaña, desde donde se puede imprimir o compartir).
+
 ## Archivos
 
 | Archivo         | Qué es                                                                    |

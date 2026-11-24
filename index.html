@@ -25,7 +25,7 @@
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <style>
   @font-face { font-family: "Vibes"; src: url("fuente.ttf") format("truetype"); font-display: swap; }
   :root {
@@ -88,7 +88,9 @@
 
   form { display: grid; gap: 16px; }
   .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  label { display: grid; gap: 6px; font-size: 14px; color: var(--muted); }
+  .campo { display: grid; gap: 6px; align-content: start; }
+  label { font-size: 14px; color: var(--muted); }
+  .blanco[aria-disabled="true"] { pointer-events: none; opacity: .5; }
   input {
     font: inherit; font-size: 28px; font-weight: 500; font-variant-numeric: tabular-nums; width: 100%;
     padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--field); color: var(--ink);
@@ -167,16 +169,19 @@
 
   <div class="layout">
     <section>
-      <form id="form" novalidate>
+      <noscript><p class="aviso">Esta página necesita JavaScript para generar las papeletas. Actívalo o prueba con otro navegador.</p></noscript>
+      <form id="form" novalidate action="javascript:void 0">
         <div class="row">
-          <label>Desde
+          <div class="campo">
+            <label for="desde">Desde</label>
             <input id="desde" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="101" aria-describedby="aviso-desde">
             <small class="aviso" id="aviso-desde"></small>
-          </label>
-          <label>Hasta
+          </div>
+          <div class="campo">
+            <label for="hasta">Hasta</label>
             <input id="hasta" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="200" aria-describedby="aviso-hasta">
             <small class="aviso" id="aviso-hasta"></small>
-          </label>
+          </div>
         </div>
         <button class="btn primary" id="generar" type="submit">Generar papeletas</button>
         <p id="status" role="status" aria-live="polite"></p>
@@ -187,7 +192,7 @@
       </form>
       <div class="extra">
         <p>Imprime en A4 al 100 %, sin ajustar a la página.</p>
-        <p><a id="blanco" href="#">Papeletas en blanco</a> para rellenar a mano</p>
+        <p><a id="blanco" class="blanco" href="#">Papeletas en blanco</a> para rellenar a mano</p>
       </div>
     </section>
 
@@ -198,13 +203,25 @@
   </div>
 </main>
 
-<script src="config.js?v=2"></script>
+<script src="config.js?v=3"></script>
 <script src="lib/pdf-lib.min.js"></script>
 <script src="lib/fontkit.umd.min.js"></script>
 <script src="lib/pdf.min.js"></script>
 <script>
 (() => {
-  const C = window.CONFIG;
+  // Valores por defecto por si config.js falta, está a medias o el navegador tiene una copia vieja
+  const C = Object.assign({
+    plantilla: "plantilla.pdf", marcador: "0000", cifras: 4, fuente: "fuente.ttf", color: "#000000",
+    orden: "filas", maximo: 10000,
+  }, window.CONFIG || {});
+  C.tapar = Object.assign({ izquierda: 0.08, derecha: 0.08, abajo: 0.22, arriba: 0.80 }, (window.CONFIG || {}).tapar || {});
+  C.maximo = Math.max(C.maximo, 10 ** C.cifras);   // siempre se puede cubrir todo el rango de cifras
+  if (!window.PDFLib || !window.fontkit || !window.pdfjsLib) {
+    document.getElementById("status").textContent = "No se ha podido cargar la página completa. Recarga con Ctrl+F5 o prueba con otro navegador.";
+    document.getElementById("status").className = "err";
+    document.getElementById("generar").disabled = true;
+    return;
+  }
   pdfjsLib.GlobalWorkerOptions.workerSrc = "lib/pdf.worker.min.js";
 
   const $ = (id) => document.getElementById(id);
@@ -251,7 +268,10 @@
 
   // Cada papeleta ocupa una celda de una cuadrícula regular (filas × columnas) que cubre la hoja.
   // Se usa para no imprimir las papeletas que sobran en la última hoja.
-  function asignarCeldas(marks, W, H) {
+  function asignarCeldas(marks, W, H, caja) {
+    if (!marks.length) return;
+    // La cuadrícula se reparte sobre la zona con contenido (por si el diseño tiene márgenes blancos)
+    const x0 = caja ? caja.x0 : 0, x1 = caja ? caja.x1 : W, y0 = caja ? caja.y0 : 0, y1 = caja ? caja.y1 : H;
     const grupos = (vals, tol) => {
       const g = [];
       for (const v of [...vals].sort((a, b) => a - b)) if (!g.length || v - g[g.length - 1] > tol) g.push(v);
@@ -260,18 +280,49 @@
     const cx = marks.map((m) => m.x + m.w / 2), cy = marks.map((m) => m.y + m.size * 0.35);
     const tol = Math.max(...marks.map((m) => m.size), 1) * 0.6;
     const cols = grupos(cx, tol), filas = grupos(cy, tol);
-    const cw = W / cols, ch = H / filas;
+    const cw = (x1 - x0) / cols, ch = (y1 - y0) / filas;
     marks.forEach((m, i) => {
-      const c = Math.min(cols - 1, Math.max(0, Math.floor(cx[i] / cw)));
-      const f = Math.min(filas - 1, Math.max(0, Math.floor((H - cy[i]) / ch)));
-      m.celda = { x: c * cw, y: H - (f + 1) * ch, w: cw, h: ch };
+      const c = Math.min(cols - 1, Math.max(0, Math.floor((cx[i] - x0) / cw)));
+      const f = Math.min(filas - 1, Math.max(0, Math.floor((y1 - cy[i]) / ch)));
+      m.celda = { x: x0 + c * cw, y: y1 - (f + 1) * ch, w: cw, h: ch };
     });
+  }
+
+  // Rectángulo (en puntos PDF) que contiene todo lo que no es blanco en la hoja renderizada
+  function cajaContenido(ctx, w, h, scale, pageH) {
+    const d = ctx.getImageData(0, 0, w, h).data;
+    let minX = w, minY = h, maxX = -1, maxY = -1;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (d[i + 3] > 0 && (d[i] < 245 || d[i + 1] < 245 || d[i + 2] < 245)) {
+        if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y;
+      }
+    }
+    if (maxX < 0) return null;
+    const caja = { x0: minX / scale, x1: (maxX + 1) / scale, y1: pageH - minY / scale, y0: pageH - (maxY + 1) / scale };
+    // Si el contenido ya llega (casi) a los bordes, se usa la hoja entera para no perder líneas finas
+    const W = w / scale, m = 6;
+    if (caja.x0 < m) caja.x0 = 0; if (caja.x1 > W - m) caja.x1 = W;
+    if (caja.y0 < m) caja.y0 = 0; if (caja.y1 > pageH - m) caja.y1 = pageH;
+    return caja;
+  }
+
+  // Traduce errores técnicos a algo que se entienda
+  function mensaje(e) {
+    const t = String((e && (e.message || e.name)) || e || "");
+    if (location.protocol === "file:") return "Abre la página desde su enlace web; con doble clic sobre el archivo no funciona.";
+    if (e instanceof TypeError && /fetch|network|load/i.test(t)) return "No hay conexión o no se pudo descargar algún archivo. Comprueba la conexión y recarga la página.";
+    if (/InvalidPDF|Invalid PDF|PDF header/i.test(t) || (e && e.name === "InvalidPDFException")) return "«plantilla.pdf» no es un PDF válido.";
+    if (/worker/i.test(t)) return "No se pudo cargar una parte del programa. Recarga la página con Ctrl+F5.";
+    if (/[áéíóúñ«]/i.test(t)) return t;            // nuestros propios mensajes ya están en español
+    return "No se pudo generar el PDF. Recarga la página con Ctrl+F5 y vuelve a intentarlo.";
   }
 
   // Lee la plantilla: localiza cada marcador y el color de fondo que hay detrás
   async function cargarPlantilla() {
     if (plantilla) return plantilla;
     const [pdfBytes, fontBytes] = await Promise.all([fetchBytes(C.plantilla), fetchBytes(C.fuente)]);
+    try { fontkit.create(fontBytes); } catch (_) { throw new Error(`«${C.fuente}» no es una fuente válida.`); }
     const doc = await pdfjsLib.getDocument({ data: pdfBytes.slice() }).promise;
     const pages = [];
     for (let i = 1; i <= doc.numPages; i++) {
@@ -290,7 +341,6 @@
         }
       }
       marks = ordenar(marks);
-      asignarCeldas(marks, vx2 - vx, vy2 - vy);
 
       // Muestra el color del borde del recuadro para taparlo con el mismo color
       const scale = 1.5, vp = page.getViewport({ scale });
@@ -299,6 +349,7 @@
       const ctx = canvas.getContext("2d", { willReadFrequently: true });
       await page.render({ canvasContext: ctx, viewport: vp }).promise;
       const pageH = vy2 - vy;
+      asignarCeldas(marks, vx2 - vx, pageH, cajaContenido(ctx, canvas.width, canvas.height, scale, pageH));
       for (const m of marks) {
         const r = rectFor(m), votes = new Map();
         const pts = [];
@@ -388,8 +439,39 @@
     } catch (e) { console.warn("Sin vista previa:", e); }
   }
 
+  // «Imprimir»: en ordenador abre directamente el diálogo de impresión; en móvil abre el PDF
+  const tactil = window.matchMedia("(pointer: coarse)").matches;
+  if (tactil) abrir.textContent = "Abrir PDF";
+  abrir.addEventListener("click", (ev) => {
+    if (tactil || !lastUrl) return;                 // en móvil: comportamiento normal del enlace
+    ev.preventDefault();
+    const viejo = document.getElementById("marco-impresion");
+    if (viejo) viejo.remove();
+    const marco = document.createElement("iframe");
+    marco.id = "marco-impresion";
+    marco.style.cssText = "position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;";
+    marco.src = lastUrl;
+    marco.onload = () => {
+      setTimeout(() => {
+        try { marco.contentWindow.focus(); marco.contentWindow.print(); }
+        catch (_) { window.open(lastUrl, "_blank", "noopener"); }
+      }, 300);
+    };
+    document.body.appendChild(marco);
+  });
+
+  // Mientras se genera un PDF no se puede tocar nada más
+  let generando = false;
+  function bloquear(si) {
+    generando = si; btn.disabled = si;
+    desdeEl.readOnly = hastaEl.readOnly = si;
+    $("blanco").setAttribute("aria-disabled", si ? "true" : "false");
+  }
+
   $("blanco").addEventListener("click", async (ev) => {
     ev.preventDefault();
+    if (generando) return;
+    bloquear(true);
     setStatus("Generando papeletas en blanco…");
     try {
       const { bytes } = await generar(1, 1, true);
@@ -401,7 +483,9 @@
       setStatus("Papeletas en blanco descargadas.", "ok");
     } catch (e) {
       console.error(e);
-      setStatus(e.message || "No se pudo generar el PDF.", "err");
+      setStatus(mensaje(e), "err");
+    } finally {
+      bloquear(false);
     }
   });
 
@@ -409,19 +493,27 @@
   // Acepta espacios, «Nº 101», «#101», «0101», «1.000», números copiados de una hoja
   // con caracteres invisibles e incluso «101-200» escrito en una sola casilla.
   const MAXIMO_NUM = 10 ** C.cifras - 1;
+  const DIGITOS_EXTRA = /[٠-٩۰-۹०-९]/g;   // árabes, persas, devanagari
   function limpiar(v) {
     return String(v ?? "")
-      .normalize("NFKC")                               // dígitos de ancho completo, espacios raros…
-      .replace(/[​-‍⁠﻿­]/g, "") // caracteres invisibles
+      .replace(DIGITOS_EXTRA, (c) => { const k = c.charCodeAt(0); return String(k - (k >= 0x966 ? 0x966 : k >= 0x6F0 ? 0x6F0 : 0x660)); })
+      .replace(/^\s*n\s*[º°]/i, "#")                     // «Nº» antes de normalizar (NFKC convierte «º» en «o»)
+      .normalize("NFKC")                                  // dígitos de ancho completo, espacios raros…
+      .replace(/[​-‏‪-‮⁠-⁩﻿­️⃣]/g, "") // invisibles, marcas de dirección, emojis 1️⃣
+      .replace(/["'“”‘’«»]/g, "")                         // comillas
       .replace(/\s+/g, " ").trim()
-      .replace(/^(?:n\.?\s*[º°o]\.?|n[uú]m(?:ero)?\.?|#)\s*/i, "");
+      .replace(/^(?:del?|desde)\s+(?=\d)/i, "")            // «del 101 al 200»
+      .replace(/^(?:n\.?\s*[º°o]\.?|n[uú]m(?:ero)?\.?|#)\s*/i, "")
+      .replace(/(\d)[.,]0{1,2}$/, "$1");                  // «101,00» o «101.0» pegados de una hoja
   }
+  // Devuelve [desde, hasta] si el texto es un intervalo («101-200», «101 a 200», «101, 200»…)
   function leerRango(v) {
-    const m = limpiar(v).match(/^(\d[\d.,\s]*?)\s*(?:-|–|—|\/|\ba\b|\bal\b|\bhasta\b)\s*(\d[\d.,\s]*)$/i);
+    const t = limpiar(v).replace(/\s*(?:[.,]0{1,2})?\s*(?=-|–|—|\/|;|,\s|\ba\b|\bal\b|\bhasta\b|\.\.)/i, " ");
+    const m = t.match(/^(\d[\d.]*?)\s*(?:-|–|—|\/|;|,\s|\.\.|\ba\b|\bal\b|\bhasta\b)\s*(?:#\s*|n\s*[º°o]\s*)?(\d[\d.,]*)$/i);
     if (m) return [m[1], m[2]];
-    // «101 200»: dos números separados por un espacio (salvo «1 000», que es mil)
-    const e = limpiar(v).match(/^(\d+)\s+(\d+)$/);
-    if (e && !(e[1].length === 1 && e[2].length === 3)) return [e[1], e[2]];
+    // «101 200»: dos números con un espacio, solo si el segundo es mayor (si no, es un espacio que sobra)
+    const e = t.match(/^(\d+)\s+(\d+)$/);
+    if (e && +e[2] > +e[1] && !(e[1].length === 1 && e[2].length === 3)) return [e[1], e[2], "espacio"];
     return null;
   }
   function leerNumero(v) {
@@ -431,13 +523,16 @@
     if (/^\d{1,3}([.,]\d{3})+$/.test(n)) n = n.replace(/[.,]/g, "");   // 1.000 o 1,000
     if (/^\d+$/.test(n)) {
       const num = parseInt(n, 10);
-      if (num > MAXIMO_NUM) return { error: `El número más alto posible es ${MAXIMO_NUM}.` };
+      if (num > MAXIMO_NUM) return { error: /\d\s+\d/.test(t) ? `¿Sobra un espacio? El número más alto posible es ${MAXIMO_NUM}.` : `El número más alto posible es ${MAXIMO_NUM}.` };
       return { n: num };
     }
     if (/^-\s*\d/.test(n)) return { error: "No puede ser negativo." };
     if (/^\d+[.,]\d+$/.test(n)) return { error: "Escribe un número entero, sin decimales." };
-    const sobra = [...new Set(n.replace(/[\d]/g, ""))].map((c) => `«${c}»`).join(" ");
-    return { error: `Escribe solo cifras. Sobra ${sobra}.` };
+    // Lo que sobra se enseña tal y como lo escribió la persona, sin normalizar
+    const original = String(v ?? "").replace(/\s+/g, "");
+    const raros = [...new Set([...original].filter((c) => !/[0-9٠-٩۰-۹०-९０-９]/.test(c)))]
+      .filter((c) => c.trim() && !/[​-‏‪-‮⁠-⁩﻿­️⃣]/.test(c));
+    return { error: raros.length ? `Escribe solo cifras. Sobra ${raros.map((c) => `«${c}»`).join(" ")}.` : "Escribe solo cifras." };
   }
   function marcar(el, msg) {
     const aviso = $("aviso-" + el.id);
@@ -452,6 +547,8 @@
   function repartirRango(el) {
     const r = leerRango(el.value);
     if (!r) return false;
+    const otra = el === desdeEl ? hastaEl : desdeEl;
+    if (r[2] === "espacio" && otra.value.trim()) return false;   // con la otra casilla llena, es un espacio de más
     desdeEl.value = r[0].trim(); hastaEl.value = r[1].trim();
     return true;
   }
@@ -477,15 +574,18 @@
   // Mientras se escribe: avisos al momento y resumen de lo que se va a generar
   for (const el of [desdeEl, hastaEl]) {
     el.addEventListener("input", () => {
+      if (generando) return;
       if (actions.classList.contains("show")) {           // el PDF anterior ya no corresponde
         actions.classList.remove("show"); preview.classList.remove("has");
       }
-      if (leerRango(el.value)) { setStatus("Se repartirá en Desde y Hasta al salir de la casilla.", "nota"); marcar(el, ""); return; }
+      const rg = leerRango(el.value), otra = el === desdeEl ? hastaEl : desdeEl;
+      if (rg && !(rg[2] === "espacio" && otra.value.trim())) { setStatus("Se repartirá en Desde y Hasta al salir de la casilla.", "nota"); marcar(el, ""); return; }
       const v = validar();
       if (v) setStatus(`${v.cantidad} papeleta${v.cantidad === 1 ? "" : "s"} en ${hojasPara(v.cantidad)} hoja${hojasPara(v.cantidad) === 1 ? "" : "s"}.`, "nota");
       else setStatus("");
     });
     el.addEventListener("blur", () => {
+      if (generando) return;
       repartirRango(el);
       // Deja el número limpio a la vista (sin espacios ni «Nº»)
       for (const e of [desdeEl, hastaEl]) { const r = leerNumero(e.value); if (r.n !== undefined) e.value = String(r.n); }
@@ -493,18 +593,22 @@
     });
   }
 
-  let generando = false;
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     if (generando) return;
     repartirRango(desdeEl) || repartirRango(hastaEl);
     const v = validar({ final: true });
-    if (!v) { setStatus("Revisa los números marcados en rojo.", "err"); return; }
+    if (!v) {
+      setStatus("Revisa los números marcados en rojo.", "err");
+      const malo = [desdeEl, hastaEl].find((e) => e.getAttribute("aria-invalid") === "true");
+      if (malo) malo.focus();
+      return;
+    }
     const { desde, hasta, cantidad, notas } = v;
     desdeEl.value = String(desde); hastaEl.value = String(hasta);
     marcar(desdeEl, ""); marcar(hastaEl, "");
 
-    generando = true; btn.disabled = true; actions.classList.remove("show");
+    bloquear(true); actions.classList.remove("show");
     setStatus("Generando…", "nota");
     try {
       const { bytes, hojas } = await generar(desde, hasta);
@@ -519,9 +623,9 @@
       try { history.replaceState(null, "", `?desde=${desde}&hasta=${hasta}`); } catch (_) {}
     } catch (e) {
       console.error(e);
-      setStatus(e.message || "No se pudo generar el PDF. Recarga la página y vuelve a intentarlo.", "err");
+      setStatus(mensaje(e), "err");
     } finally {
-      generando = false; btn.disabled = false;
+      bloquear(false);
     }
   });
 
@@ -607,9 +711,15 @@
 
   // Enlaces directos desde la hoja de cálculo: ?desde=101&hasta=200
   const q = new URLSearchParams(location.search);
-  if (q.get("desde")) desdeEl.value = q.get("desde");
-  if (q.get("hasta")) hastaEl.value = q.get("hasta");
-  if (q.get("desde") || q.get("hasta")) form.requestSubmit();
+  const param = (k) => { for (const [n, v] of q) if (n.trim().toLowerCase() === k) return v; return null; };
+  const pDesde = param("desde"), pHasta = param("hasta");
+  if (pDesde) desdeEl.value = pDesde;
+  if (pHasta) hastaEl.value = pHasta;
+  if ((pDesde ?? "").trim() || (pHasta ?? "").trim()) {
+    if (form.requestSubmit) form.requestSubmit(); else form.dispatchEvent(new Event("submit", { cancelable: true }));
+  } else if (pDesde !== null || pHasta !== null) {
+    setStatus("El enlace no trae números: revisa que la fila de la hoja tenga «desde» y «hasta».", "err");
+  }
 })();
 </script>
 </body>
